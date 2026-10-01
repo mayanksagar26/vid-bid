@@ -15,7 +15,7 @@ async function api(path, opts = {}) {
   const r = await fetch(path, opts);
   let body = null;
   try { body = await r.json(); } catch { /* empty */ }
-  if (!r.ok && r.status !== 422) throw new Error((body && body.detail) || `Request failed (${r.status})`);
+  if (!r.ok) throw new Error((body && body.detail) || `Request failed (${r.status})`);
   return { status: r.status, body };
 }
 
@@ -109,12 +109,12 @@ function render() {
     const src = fileUrl(p.video);
     if (lastVideoSrc !== src) { $("#source-video").src = src; lastVideoSrc = src; }
   }
+  if (!selected && p.selected) selected = p.selected;
+  if (!selected && haveObjects && p.objects.length === 1) selected = p.objects[0].id;
   show($("#no-objects"), p.status === "no_objects");
   renderObjects();
 
   // Step 3: product
-  if (!selected && p.selected) selected = p.selected;
-  if (!selected && haveObjects && p.objects.length === 1) selected = p.objects[0].id;
   const sel = haveObjects && p.objects.find((o) => o.id === selected);
   show($("#step-product"), !!sel);
   if (sel) {

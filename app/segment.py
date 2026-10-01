@@ -79,7 +79,7 @@ def _product_box(bgr, category):
 
 # ------------------------------------------------------------------ video tracking
 
-CHUNK = 96          # frames per SAM 2 session (bounded memory on 16 GB machines)
+CHUNK = 150         # frames per SAM 2 session (bounded memory on 16 GB machines)
 REPROMPT_EVERY = 2.0  # seconds between detector box re-prompts inside a chunk
 
 
@@ -125,7 +125,7 @@ def track_object(frames_dir: Path, frame_scale, segments, dets, fps, work: Path,
                 os.symlink(frames_dir / f"{f:05d}.jpg", cdir / f"{i:05d}.jpg")
 
             chunk_dets = [f for f in det_frames if start <= f <= end]
-            with torch.inference_mode():
+            with torch.inference_mode(), models.autocast():
                 state = pred.init_state(video_path=str(cdir), offload_video_to_cpu=True,
                                         offload_state_to_cpu=True)
                 prompted = False

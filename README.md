@@ -28,11 +28,12 @@ There are no global installs: ffmpeg comes from the `imageio-ffmpeg` wheel, and 
 | Detect + track | YOLO-World v2 (open vocabulary, `app/vocab.py`) with ByteTrack at about 15 fps. Each track is relabelled by fusing CLIP zero-shot probabilities with the detector's class votes, and fragments of the same object are merged by CLIP similarity. |
 | Compatibility check | CLIP ViT-B/16 zero-shot over the product categories plus "distractor" classes (person, animal, scene…). Image-to-image similarity with crops of the original object is used as a tie-breaker. |
 | Product cutout | The detector proposes boxes, CLIP picks the best one for the target category, and SAM 2.1 segments it. A PNG with an alpha channel is used as-is. |
-| Segmentation through time | SAM 2.1 video predictor over every frame. It runs in 96-frame chunks so a minute of video fits in 16 GB, handing the mask from one chunk to the next, and is re-prompted with confident detector boxes every 2 s to prevent drift. |
-| Replacement | Per-frame oriented geometry from the mask, temporally smoothed. The cutout gets an affine warp onto it, cylindrical shading plus a lighting gradient fitted from the original object, white balance and brightness matched to the scene, motion blur from object velocity, and occluder-aware compositing so fingers and foam in front of the object stay in front. Any leftover original pixels are inpainted. |
+| Segmentation through time | SAM 2.1 (small) video predictor over every frame at 512 px with fp16 autocast, which runs at about 10 fps on MPS (1024 px manages only about 1 fps). It runs in 150-frame chunks so memory stays bounded, handing the mask from one chunk to the next, and is re-prompted with confident detector boxes every 2 s to prevent drift. Masks are cached per object, so re-running with another product image skips tracking. |
+| Geometry | For each mask, the left and right silhouette edges are fitted as lines, so perspective taper is captured. For cylinders (cans, bottles, cups), the top and bottom rim ellipses are fitted to the outline. Ends cut off by the frame edge are reconstructed from frames where they're visible, outlier masks are dropped, and everything is smoothed over time. |
+| Replacement | The product's label (its cutout cropped to the solid body) is wrapped onto the tapered cylinder between the rims with a per-pixel remap. The label can stretch by at most 1.2×; beyond that it's cropped rather than distorted. The original lid and anything on top of it stays as it was. Shading uses a cylinder falloff plus a lighting gradient fitted from the original object; white balance and exposure come from the surroundings; blur is matched to the footage's focus, and motion blur to the object's velocity. Pixels inside the object's outline that SAM excludes (fingers, foam, straws) stay in front. Slivers of the old object are inpainted. |
 | Audio | The original track is copied unchanged into the output. |
 
-Environment knobs: `VIDBID_SAM2=tiny|small|base_plus|large` (default `small`) and `VIDBID_YOLO=yolov8l-worldv2.pt`.
+Environment knobs: `VIDBID_SAM2=tiny|small|base_plus|large` (default `small`), `VIDBID_SAM2_RES=512` (SAM input size; 1024 is sharper but about 10× slower), and `VIDBID_YOLO=yolov8l-worldv2.pt`.
 
 ## Layout
 
@@ -64,11 +65,22 @@ mkdir -p samples
 
 For the replacement image, use any photo of a different can. A front-on product shot on a plain background works best.
 
+## Performance
+
+On the benchmark (848×480, 60 s, 1,800 frames) on an Apple Silicon Mac with 16 GB:
+- detection: about 70 s;
+- tracking: about 3 min;
+- rendering and encoding: about 70 s.
+
+A re-run with a different product image reuses the cached tracking and takes about 70 s.
+
 ## Limits
 
-- The object is treated as a rigid label-facing-camera item. If the real object rotates (for example, a can turned to show its back), the new label does not rotate with it.
-- Objects that leave the frame partially get a truncated fit.
-- Processing time is roughly 2–4× real time on an M-series Mac for a 480p–720p minute.
+- **Rotation.** The label is wrapped as if the object keeps the same side to the camera. If the real can is spun around, the new label doesn't spin with it.
+- **Attached occluders.** Things SAM counts as part of the object, such as foam dripping down the side of the benchmark can, get covered by the new label. Separate occluders (fingers, foam on top, other objects) stay in front.
+- **Shape mismatch.** A slim can replacing a standard can is fitted to the original's silhouette, with the label cropped to fit.
+- **Cuts.** Hard scene cuts aren't detected; each detected appearance is tracked separately.
+- **Detector licence.** See Licence below.
 
 ## Licence
 

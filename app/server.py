@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -203,8 +203,7 @@ async def upload_product(pid: str, object_id: str = Form(...), file: UploadFile 
         cv2.imwrite(str(prod_dir / f"cutout_{stamp}.png"), cut)
         product["cutout"] = f"product/cutout_{stamp}.png"
     update(pid, product=product, selected=object_id)
-    status = 200 if check["ok"] else 422
-    return JSONResponse(product, status_code=status)
+    return product  # a refusal is a normal outcome: check["ok"] is False
 
 
 class ProcessReq(BaseModel):
