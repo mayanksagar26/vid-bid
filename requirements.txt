@@ -1,0 +1,16 @@
+torch>=2.5
+torchvision
+ultralytics>=8.3
+lap>=0.5.12
+git+https://github.com/ultralytics/CLIP.git
+sam2>=1.1
+open_clip_torch>=2.24
+opencv-python
+numpy
+scipy
+pillow
+fastapi
+uvicorn[standard]
+python-multipart
+yt-dlp
+imageio-ffmpeg

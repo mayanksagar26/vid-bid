@@ -1,0 +1,28 @@
+# environment
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# ffmpeg symlink (recreated by run.sh)
+bin/
+
+# model weights / checkpoints (downloaded on first run)
+models/
+weights/
+*.pt
+*.pth
+*.safetensors
+*.onnx
+
+# user data: uploads, YouTube downloads, processed outputs, caches
+data/
+samples/
+*.mp4
+*.mov
+*.webm
+*.mkv
+*.part
+
+# local tool state
+.gstack/

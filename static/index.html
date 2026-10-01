@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vid-bid</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">▣</span> vid-bid</div>
+  <div class="sub">Swap an object in a video for your product</div>
+  <button id="restart" class="ghost hidden">New video</button>
+</header>
+
+<main>
+  <!-- 1. Source -->
+  <section id="step-source" class="card">
+    <h2><span class="num">1</span> Video</h2>
+    <div class="source-grid">
+      <label id="drop" class="drop">
+        <input id="file" type="file" accept="video/*" hidden>
+        <div class="drop-icon">⇪</div>
+        <div><b>Upload a video</b></div>
+        <div class="muted">or drop it here · mp4, mov, webm · first 2 min used</div>
+      </label>
+      <div class="or">or</div>
+      <form id="yt-form" class="yt">
+        <label for="yt">Paste a YouTube link</label>
+        <div class="row">
+          <input id="yt" type="url" placeholder="https://www.youtube.com/watch?v=…" required>
+          <button type="submit">Fetch</button>
+        </div>
+        <div class="muted">The first 60 seconds are used.</div>
+      </form>
+    </div>
+  </section>
+
+  <!-- progress (shared) -->
+  <section id="job" class="card hidden">
+    <div class="job-head"><span id="job-title">Working…</span><span id="job-pct" class="muted"></span></div>
+    <div class="bar"><div id="job-bar"></div></div>
+    <div id="job-msg" class="muted"></div>
+  </section>
+
+  <div id="error" class="alert bad hidden"></div>
+
+  <!-- 2. Objects -->
+  <section id="step-objects" class="card hidden">
+    <h2><span class="num">2</span> Pick the object to replace</h2>
+    <div class="objects-layout">
+      <video id="source-video" controls playsinline></video>
+      <div>
+        <div id="objects" class="objects"></div>
+        <p id="no-objects" class="muted hidden">No replaceable objects found. Try a clip where the product is clearly visible.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Replacement -->
+  <section id="step-product" class="card hidden">
+    <h2><span class="num">3</span> Upload the new item</h2>
+    <div class="product-layout">
+      <div class="swap">
+        <figure><img id="sel-thumb" alt=""><figcaption id="sel-label"></figcaption></figure>
+        <div class="arrow">→</div>
+        <label id="pdrop" class="drop small">
+          <input id="pfile" type="file" accept="image/*" hidden>
+          <img id="cutout" class="hidden" alt="">
+          <div id="pdrop-text"><div class="drop-icon">＋</div><b>Product image</b><div class="muted">PNG with transparency is best</div></div>
+        </label>
+      </div>
+      <div>
+        <div id="check" class="alert hidden"></div>
+        <button id="go" class="primary hidden">Replace in video</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Result -->
+  <section id="step-result" class="card hidden">
+    <h2><span class="num">4</span> Result</h2>
+    <div class="tabs">
+      <button data-tab="compare" class="tab active">Before / after</button>
+      <button data-tab="result" class="tab">Result</button>
+      <button data-tab="side" class="tab">Side by side</button>
+      <a id="download" class="button primary" download>Download MP4</a>
+    </div>
+    <div id="tab-compare" class="tabpane">
+      <div id="cmp" class="compare">
+        <video id="cmp-after" playsinline></video>
+        <video id="cmp-before" playsinline muted></video>
+        <div id="cmp-handle" class="handle"><span></span></div>
+        <div class="tag l">Before</div><div class="tag r">After</div>
+      </div>
+      <div class="controls">
+        <button id="cmp-play">Play</button>
+        <input id="cmp-seek" type="range" min="0" max="1000" value="0">
+        <span id="cmp-time" class="muted">0:00</span>
+      </div>
+    </div>
+    <div id="tab-result" class="tabpane hidden"><video id="result-video" controls playsinline></video></div>
+    <div id="tab-side" class="tabpane hidden side">
+      <figure><video id="side-before" controls playsinline muted></video><figcaption>Before</figcaption></figure>
+      <figure><video id="side-after" controls playsinline></video><figcaption>After</figcaption></figure>
+    </div>
+    <p id="result-stats" class="muted"></p>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
