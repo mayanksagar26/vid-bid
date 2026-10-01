@@ -53,8 +53,30 @@ Project state lives in `data/<project-id>/` (git-ignored).
 
 "Slowly fizzing coke zero", <https://www.youtube.com/watch?v=mp60AngR5tA> (first 60 s). It shows one Coke Zero can on a desk with a mostly static camera; foam spilling over the top is the only occlusion.
 
+No video is included in this repo. Paste the URL into the app, or fetch the clip yourself:
+
+```bash
+mkdir -p samples
+.venv/bin/yt-dlp -f "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b" --merge-output-format mp4 \
+  --ffmpeg-location bin/ffmpeg --download-sections "*0-60" \
+  -o samples/coke_zero.mp4 "https://www.youtube.com/watch?v=mp60AngR5tA"
+```
+
+For the replacement image, use any photo of a different can. A front-on product shot on a plain background works best.
+
 ## Limits
 
 - The object is treated as a rigid label-facing-camera item. If the real object rotates (for example, a can turned to show its back), the new label does not rotate with it.
 - Objects that leave the frame partially get a truncated fit.
 - Processing time is roughly 2–4× real time on an M-series Mac for a 480p–720p minute.
+
+## Licence
+
+vid-bid's own code is MIT (see `LICENSE`). Its dependencies have their own licences:
+
+- **Ultralytics / YOLO-World is AGPL-3.0.** vid-bid imports it for detection, so if you distribute vid-bid or offer it as a network service, the combined work is subject to the AGPL. To avoid that, swap the detector for an Apache/MIT one, such as OWLv2 or Grounding DINO via `transformers`.
+- SAM 2 (code and weights): Apache-2.0.
+- open_clip: MIT. The LAION CLIP weights are MIT.
+- yt-dlp: Unlicense. ffmpeg (bundled via imageio-ffmpeg): GPL build.
+
+Only download videos you have the right to use.
