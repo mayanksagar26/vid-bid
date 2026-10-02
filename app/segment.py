@@ -28,24 +28,31 @@ def _fill_holes(mask):
 
 
 def product_cutout(img, category):
-    """Return a tight BGRA cutout of the product in an uploaded image."""
+    """Return a tight BGRA cutout of the product in an uploaded image.
+
+    Uses the image's own alpha if it has real transparency, otherwise BiRefNet matting. If the
+    photo contains several things, the matte is restricted to the product box (detector + CLIP)."""
     if img.ndim == 3 and img.shape[2] == 4 and (img[:, :, 3] < 250).mean() > 0.02:
         alpha = img[:, :, 3]
         bgr = img[:, :, :3]
     else:
+        from PIL import Image
+        from rembg import remove
         bgr = img[:, :, :3]
-        h, w = bgr.shape[:2]
+        rgba = np.array(remove(Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)),
+                               session=models.matting()))
+        alpha = rgba[:, :, 3]
+        # Keep the matte component that overlaps the product box most.
         box = _product_box(bgr, category)
-        pred = models.sam2_image()
-        with torch.inference_mode():
-            pred.set_image(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-            masks, scores, _ = pred.predict(box=np.array(box, np.float32), multimask_output=True)
-        # Prefer the mask that best fills the box (whole product, not just its label).
-        bx = (box[2] - box[0]) * (box[3] - box[1])
-        best = max(range(len(masks)), key=lambda i: scores[i] + 0.5 * min(1.0, masks[i].sum() / bx))
-        m = _fill_holes(_largest_component(masks[best] > 0))
-        alpha = (m * 255).astype(np.uint8)
-        alpha = cv2.GaussianBlur(alpha, (3, 3), 0)
+        n, lab, stats, _ = cv2.connectedComponentsWithStats((alpha > 128).astype(np.uint8), 8)
+        if n > 2:
+            x0, y0, x1, y1 = [int(v) for v in box]
+            inside = lab[max(0, y0):y1, max(0, x0):x1]
+            counts = np.bincount(inside.ravel(), minlength=n)
+            counts[0] = 0
+            keep = int(np.argmax(counts)) if counts.max() > 0 else 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+            region = cv2.dilate((lab == keep).astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
+            alpha = np.where(region, alpha, 0).astype(np.uint8)
     ys, xs = np.where(alpha > 20)
     if len(xs) == 0:
         raise ValueError("Could not find the product in that image.")

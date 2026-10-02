@@ -108,6 +108,15 @@ def autocast():
     return contextlib.nullcontext()
 
 
+def matting():
+    """BiRefNet (via rembg's ONNX export) for product background removal."""
+    def load():
+        os.environ.setdefault("U2NET_HOME", str(MODELS / "rembg"))
+        from rembg import new_session
+        return new_session("birefnet-general")
+    return _once("matting", load)
+
+
 def free_memory():
     import gc
     gc.collect()

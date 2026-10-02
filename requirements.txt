@@ -14,3 +14,10 @@ uvicorn[standard]
 python-multipart
 yt-dlp
 imageio-ffmpeg
+timm
+kornia
+einops
+fal-client
+runwayml
+python-dotenv
+rembg[cpu]

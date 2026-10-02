@@ -26,7 +26,7 @@ from . import media, segment
 
 GAP_FILL = 6            # frames: reuse a neighbouring mask when SAM drops the object briefly
 TAIL_PAD_SECONDS = 0.5  # keep tracking a little past the last detection
-SEG_JOIN_SECONDS = 2.0  # join detection segments separated by short gaps
+SEG_JOIN_SECONDS = 5.0  # bridge detection gaps (e.g. a can tilted mid-pour) with SAM tracking
 MAX_STRETCH = 1.2       # max anisotropic stretch of the label before cropping instead
 # Typical visible body height / diameter between the rims, used when no frame shows both ends.
 DEFAULT_BODY_RATIO = {"can": 1.7, "bottle": 2.8, "cup": 1.1, "jar": 1.2}

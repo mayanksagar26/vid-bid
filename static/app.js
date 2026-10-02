@@ -8,6 +8,14 @@ let selected = null;
 let pollTimer = null;
 let lastVideoSrc = null;
 let lastResultSrc = null;
+let engines = [];
+let engine = "vace";
+let shownEngine = null;
+const ENGINE_NOTES = {
+  local: "Free, runs on this Mac in ~1–5 min. Label is wrapped onto the tracked shape; good for previews.",
+  vace: "Open-source Wan VACE 14B on fal.ai GPUs. Re-renders only the object, so lighting, reflections and motion look real.",
+  aleph: "Runway's premium editor. Re-renders the clip guided by keyframes from the fast preview. Max 30 s.",
+};
 
 const fileUrl = (path) => `/files/${pid}/${path}`;
 
@@ -63,7 +71,7 @@ $("#restart").addEventListener("click", () => {
 function openProject(id) {
   pid = id;
   if (location.hash !== `#p=${id}`) history.replaceState(null, "", `#p=${id}`);
-  refresh();
+  refresh().then(loadEngines);
 }
 
 async function refresh() {
@@ -125,9 +133,24 @@ function render() {
   }
 
   // Step 4: result
-  const done = p.status === "done" && p.result;
-  show($("#step-result"), !!done);
-  if (done) renderResult(p.result);
+  const results = p.results || {};
+  const have = Object.keys(results);
+  show($("#step-result"), have.length > 0 && !(busy && j.kind === "process" && !have.length));
+  if (have.length) {
+    if (!shownEngine || !results[shownEngine]) shownEngine = (p.result && p.result.engine) || have[0];
+    const row = $("#result-engines");
+    row.innerHTML = "";
+    if (have.length > 1) {
+      have.forEach((k) => {
+        const b = document.createElement("button");
+        b.textContent = (engines.find((e) => e.id === k) || { label: k }).label;
+        b.className = k === shownEngine ? "active" : "";
+        b.onclick = () => { shownEngine = k; render(); };
+        row.appendChild(b);
+      });
+    }
+    renderResult(results[shownEngine]);
+  }
   document.querySelectorAll("#go, #pdrop").forEach((el) => el.classList.toggle("disabled", !!busy));
   $("#go").disabled = !!busy;
 }
@@ -171,7 +194,7 @@ async function uploadProduct(file) {
   c.className = "alert";
   c.textContent = "Checking the image…";
   show(c, true);
-  show($("#go"), false);
+  show($("#engine-box"), false);
   try {
     await api(`/api/projects/${pid}/product`, { method: "POST", body: fd });
     await refresh();
@@ -182,7 +205,7 @@ function renderCheck(prod, sel) {
   const c = $("#check");
   const img = $("#cutout");
   if (!prod) {
-    show(c, false); show($("#go"), false); show(img, false); show($("#pdrop-text"), true);
+    show(c, false); show($("#engine-box"), false); show(img, false); show($("#pdrop-text"), true);
     return;
   }
   c.className = "alert " + (prod.check.ok ? "good" : "bad");
@@ -194,8 +217,9 @@ function renderCheck(prod, sel) {
   show($("#pdrop-text"), false);
   const processing = project.job_state && project.job_state.kind === "process" &&
     ["queued", "running"].includes(project.job_state.status);
-  show($("#go"), prod.check.ok && !processing);
-  $("#go").textContent = project.result ? "Run again" : "Replace in video";
+  show($("#engine-box"), prod.check.ok);
+  $("#go").disabled = processing;
+  renderEngines();
 }
 
 $("#go").addEventListener("click", async () => {
@@ -203,12 +227,40 @@ $("#go").addEventListener("click", async () => {
   try {
     await api(`/api/projects/${pid}/process`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ object_id: selected }),
+      body: JSON.stringify({ object_id: selected, engine, description: $("#desc").value }),
     });
     show($("#step-result"), false);
     refresh();
   } catch (e) { setError(e.message); }
 });
+
+async function loadEngines() {
+  try {
+    const { body } = await api(`/api/projects/${pid}/engines`);
+    engines = body;
+    if (!engines.find((e) => e.id === engine && e.ready)) engine = "local";
+    renderEngines();
+  } catch { /* ignore */ }
+}
+
+function renderEngines() {
+  const box = $("#engines");
+  if (!box || !engines.length) return;
+  if (project && project.description && !$("#desc").value) $("#desc").value = project.description;
+  box.innerHTML = "";
+  engines.forEach((e) => {
+    const el = document.createElement("label");
+    el.className = "engine" + (e.id === engine ? " sel" : "") + (e.ready ? "" : " off");
+    const cost = e.id === "local" ? "Free" : `~$${e.cost.toFixed(2)}`;
+    const note = e.ready ? ENGINE_NOTES[e.id] : `Add ${e.missing_key} to vid-bid/.env and restart to enable.`;
+    el.innerHTML = `<input type="radio" name="engine" ${e.id === engine ? "checked" : ""} ${e.ready ? "" : "disabled"}>
+      <div><div class="t">${e.label}</div><div class="muted">${note}</div></div><div class="cost">${cost}</div>`;
+    if (e.ready) el.onclick = () => { engine = e.id; renderEngines(); };
+    box.appendChild(el);
+  });
+  const sel = engines.find((e) => e.id === engine);
+  $("#go").textContent = sel && sel.id !== "local" ? `Replace in video (~$${sel.cost.toFixed(2)})` : "Replace in video";
+}
 
 // ------------------------------------------------------------ result + compare
 function renderResult(r) {
@@ -266,5 +318,5 @@ sa.addEventListener("pause", () => sb.pause());
 sa.addEventListener("seeked", () => { sb.currentTime = sa.currentTime; });
 
 // ------------------------------------------------------------ boot
-const m = location.hash.match(/p=([a-z0-9]+)/);
+const m = location.hash.match(/p=([a-zA-Z0-9]+)/);
 if (m) openProject(m[1]);

@@ -72,7 +72,14 @@
       </div>
       <div>
         <div id="check" class="alert hidden"></div>
-        <button id="go" class="primary hidden">Replace in video</button>
+        <div id="engine-box" class="hidden">
+          <div class="engine-title">How should it be replaced?</div>
+          <div id="engines" class="engines"></div>
+          <label class="desc">Describe the new product <span class="muted">(helps the generative engines)</span>
+            <input id="desc" type="text" placeholder="e.g. a black Pepsi Black can">
+          </label>
+          <button id="go" class="primary">Replace in video</button>
+        </div>
       </div>
     </div>
   </section>
@@ -80,6 +87,7 @@
   <!-- 4. Result -->
   <section id="step-result" class="card hidden">
     <h2><span class="num">4</span> Result</h2>
+    <div id="result-engines" class="chips-row"></div>
     <div class="tabs">
       <button data-tab="compare" class="tab active">Before / after</button>
       <button data-tab="result" class="tab">Result</button>

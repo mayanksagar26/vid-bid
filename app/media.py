@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import cv2
+import numpy as np
 import imageio_ffmpeg
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
@@ -66,9 +67,13 @@ def normalize(src: Path, dst: Path, max_seconds=MAX_SECONDS):
     """Re-encode to constant-frame-rate H.264/AAC mp4 that browsers, OpenCV and SAM all agree on."""
     info = probe(src)
     fps = info["fps"] if 1 <= info["fps"] <= 60 else 30
-    vf = f"scale=-2:'min({MAX_HEIGHT},ih)':flags=lanczos,fps={fps:.6f},format=yuv420p"
+    # Everything downstream assumes tagged BT.709 limited range.
+    vf = (f"scale=-2:'min({MAX_HEIGHT},ih)':flags=lanczos:out_color_matrix=bt709:out_range=tv,"
+          f"fps={fps:.6f},format=yuv420p")
     cmd = [FFMPEG, "-y", "-loglevel", "error", "-i", str(src), "-t", str(max_seconds),
-           "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "16",
+           "-vf", vf, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+           "-color_range", "tv", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16",
+           "-bsf:v", _BSF_709,
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(dst)]
     _run(cmd, "Could not read that video")
     return probe(dst)
@@ -88,16 +93,33 @@ def probe(path: Path):
     return {"fps": float(fps), "frames": n, "width": w, "height": h, "duration": n / fps}
 
 
+_BSF_709 = "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1"
+# Accurate rounding + full chroma: decode -> encode of untouched pixels is bit-exact.
+_SWS = "accurate_rnd+full_chroma_int+full_chroma_inp"
+
+
 def iter_frames(path: Path):
-    cap = cv2.VideoCapture(str(path))
+    """Decode to BGR with ffmpeg using an explicit BT.709 matrix, the exact inverse of VideoWriter.
+
+    OpenCV's decoder applies a BT.601 matrix to BT.709 video, shifting every colour by a few levels;
+    re-encoding those frames made the whole output visibly darker than the original."""
+    info = probe(path)
+    w, h = info["width"], info["height"]
+    cmd = [FFMPEG, "-loglevel", "error", "-i", str(path), "-map", "0:v:0",
+           "-vf", f"scale=in_color_matrix=bt709:in_range=tv:flags={_SWS}",
+           "-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=w * h * 3 * 2)
+    size = w * h * 3
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
+            buf = proc.stdout.read(size)
+            if len(buf) < size:
                 break
-            yield frame
+            yield np.frombuffer(buf, np.uint8).reshape(h, w, 3).copy()
     finally:
-        cap.release()
+        proc.stdout.close()
+        proc.kill()
+        proc.wait()
 
 
 def extract_frames_jpg(path: Path, out_dir: Path, max_side=1024):
@@ -121,7 +143,12 @@ class VideoWriter:
                "-i", "pipe:0"]
         if audio_src is not None:
             cmd += ["-i", str(audio_src), "-map", "0:v:0", "-map", "1:a:0?", "-c:a", "copy"]
-        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p",
+        # Convert and tag as BT.709 like the normalized input; untagged BT.601 output shows up
+        # visibly darker/shifted in browsers next to the original.
+        cmd += ["-vf", f"scale=out_color_matrix=bt709:out_range=tv:flags={_SWS},format=yuv420p",
+                "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+                "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
+                "-bsf:v", _BSF_709,
                 "-movflags", "+faststart", "-shortest", str(dst)]
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 

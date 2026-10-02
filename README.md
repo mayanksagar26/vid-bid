@@ -21,13 +21,32 @@ The first run creates `.venv` with Python 3.12 or 3.11 and installs `requirement
 
 There are no global installs: ffmpeg comes from the `imageio-ffmpeg` wheel, and `yt-dlp` is installed in the venv.
 
+## Engines
+
+When you replace an object you pick one of three engines:
+
+| Engine | What it does | Cost |
+|---|---|---|
+| **Fast preview** (local) | Wraps the product label onto the tracked shape on your Mac. Exact logo, but it can look pasted on. | Free |
+| **Realistic: Wan VACE 14B** ([fal.ai](https://fal.ai/models/fal-ai/wan-vace-14b/inpainting)) | Open-source video model. vid-bid sends a crop around the object, a mask video from its own tracking, and the product cutout as a reference. The model re-renders only that region, so lighting, reflections, condensation and motion look natural. The result is pasted back into the original full-res frames; everything else stays bit-identical. | $0.08 per output second at 720p, counted at 16 fps (about $3.60 for a 30 s clip) |
+| **Runway Aleph 2** ([Runway API](https://dev.runwayml.com)) | Premium video-to-video editor. Gets the clip plus up to 3 keyframes, which are stills from the fast preview, as the target look. Clips up to 30 s. | $0.28 per second (about $8.40 for 30 s) |
+
+The paid engines need API keys in `vid-bid/.env`, which git ignores:
+
+```
+FAL_KEY=...
+RUNWAYML_API_SECRET=...
+```
+
+Restart `./run.sh` after adding them. An engine without a key shows as disabled in the UI.
+
 ## How it works
 
 | Stage | Method |
 |---|---|
 | Detect + track | YOLO-World v2 (open vocabulary, `app/vocab.py`) with ByteTrack at about 15 fps. Each track is relabelled by fusing CLIP zero-shot probabilities with the detector's class votes, and fragments of the same object are merged by CLIP similarity. |
 | Compatibility check | CLIP ViT-B/16 zero-shot over the product categories plus "distractor" classes (person, animal, scene…). Image-to-image similarity with crops of the original object is used as a tie-breaker. |
-| Product cutout | The detector proposes boxes, CLIP picks the best one for the target category, and SAM 2.1 segments it. A PNG with an alpha channel is used as-is. |
+| Product cutout | BiRefNet background removal (via `rembg`). A PNG with real transparency is used as-is. |
 | Segmentation through time | SAM 2.1 (small) video predictor over every frame at 512 px with fp16 autocast, which runs at about 10 fps on MPS (1024 px manages only about 1 fps). It runs in 150-frame chunks so memory stays bounded, handing the mask from one chunk to the next, and is re-prompted with confident detector boxes every 2 s to prevent drift. Masks are cached per object, so re-running with another product image skips tracking. |
 | Geometry | For each mask, the left and right silhouette edges are fitted as lines, so perspective taper is captured. For cylinders (cans, bottles, cups), the top and bottom rim ellipses are fitted to the outline. Ends cut off by the frame edge are reconstructed from frames where they're visible, outlier masks are dropped, and everything is smoothed over time. |
 | Replacement | The product's label (its cutout cropped to the solid body) is wrapped onto the tapered cylinder between the rims with a per-pixel remap. The label can stretch by at most 1.2×; beyond that it's cropped rather than distorted. The original lid and anything on top of it stays as it was. Shading uses a cylinder falloff plus a lighting gradient fitted from the original object; white balance and exposure come from the surroundings; blur is matched to the footage's focus, and motion blur to the object's velocity. Pixels inside the object's outline that SAM excludes (fingers, foam, straws) stay in front. Slivers of the old object are inpainted. |

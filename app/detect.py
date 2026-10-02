@@ -122,7 +122,7 @@ def detect_objects(video: Path, work: Path, progress=lambda p, m: None):
                 continue
             sim = float(m["emb"] @ c["emb"])
             gap = (c["start"] - m["end"]) / fps
-            if sim >= 0.86 or (gap <= 3.0 and sim >= 0.72):
+            if sim >= 0.86 or (gap <= 6.0 and sim >= 0.75):
                 target = m
                 break
         if target is None:

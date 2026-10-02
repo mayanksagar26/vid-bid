@@ -26,3 +26,7 @@ samples/
 
 # local tool state
 .gstack/
+
+# API keys
+.env
+.env.*
