@@ -9,12 +9,11 @@ let pollTimer = null;
 let lastVideoSrc = null;
 let lastResultSrc = null;
 let engines = [];
-let engine = "vace";
+let engine = "local";
 let shownEngine = null;
 const ENGINE_NOTES = {
-  local: "Free, runs on this Mac in ~1–5 min. Label is wrapped onto the tracked shape; good for previews.",
-  vace: "Open-source Wan VACE 14B on fal.ai GPUs. Re-renders only the object, so lighting, reflections and motion look real.",
-  aleph: "Runway's premium editor. Re-renders the clip guided by keyframes from the fast preview. Max 30 s.",
+  local: "Wraps the product onto the tracked shape with the scene's own lighting, condensation and grain. Exact logo; minutes on a laptop.",
+  vace: "Open-source Wan 2.1 VACE re-renders only the object on your GPU, so reflections, hands and motion interact naturally. Slow: minutes per part.",
 };
 
 const fileUrl = (path) => `/files/${pid}/${path}`;
@@ -251,15 +250,14 @@ function renderEngines() {
   engines.forEach((e) => {
     const el = document.createElement("label");
     el.className = "engine" + (e.id === engine ? " sel" : "") + (e.ready ? "" : " off");
-    const cost = e.id === "local" ? "Free" : `~$${e.cost.toFixed(2)}`;
-    const note = e.ready ? ENGINE_NOTES[e.id] : `Add ${e.missing_key} to vid-bid/.env and restart to enable.`;
+    const cost = e.parts > 1 ? `Free · ${e.parts} parts` : "Free";
+    const note = e.ready ? ENGINE_NOTES[e.id] : e.reason;
     el.innerHTML = `<input type="radio" name="engine" ${e.id === engine ? "checked" : ""} ${e.ready ? "" : "disabled"}>
       <div><div class="t">${e.label}</div><div class="muted">${note}</div></div><div class="cost">${cost}</div>`;
     if (e.ready) el.onclick = () => { engine = e.id; renderEngines(); };
     box.appendChild(el);
   });
-  const sel = engines.find((e) => e.id === engine);
-  $("#go").textContent = sel && sel.id !== "local" ? `Replace in video (~$${sel.cost.toFixed(2)})` : "Replace in video";
+  $("#go").textContent = "Replace in video";
 }
 
 // ------------------------------------------------------------ result + compare

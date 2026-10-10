@@ -3,6 +3,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import cv2
@@ -43,7 +44,7 @@ def download_youtube(url, out_dir: Path, max_seconds=60):
     ensure_ffmpeg_link()
     out_tmpl = str(out_dir / "download.%(ext)s")
     cmd = [
-        str(ROOT / ".venv" / "bin" / "yt-dlp"), "--no-playlist", "--no-warnings", "-q",
+        sys.executable, "-m", "yt_dlp", "--no-playlist", "--no-warnings", "-q",
         "-f", "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b",
         "--merge-output-format", "mp4",
         "--ffmpeg-location", str(FFMPEG_DIR / "ffmpeg"),
