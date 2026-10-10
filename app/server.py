@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")  # FAL_KEY, RUNWAYML_API_SECRET (never committed)
+load_dotenv(ROOT / ".env")  # optional VIDBID_* settings (see README)
 
 from . import compat, detect, media, models  # noqa: E402
 DATA = ROOT / "data"
@@ -210,24 +210,22 @@ async def upload_product(pid: str, object_id: str = Form(...), file: UploadFile 
 
 
 ENGINES = {
-    "local": {"label": "Fast preview", "key": None},
-    "vace": {"label": "Realistic: Wan VACE 14B (fal.ai)", "key": "FAL_KEY"},
-    "aleph": {"label": "Runway Aleph 2", "key": "RUNWAYML_API_SECRET"},
+    "local": {"label": "Fast (any computer)"},
+    "vace": {"label": "Realistic: Wan VACE (local GPU)"},
 }
 
 
 @app.get("/api/projects/{pid}/engines")
 def engines(pid: str):
-    import os
     from . import generative
     p = load(pid)
-    info = p.get("info") or {}
+    obj = next((o for o in p.get("objects") or [] if o["id"] == p.get("selected")), None)
+    span = sum(e - s + 1 for s, e in obj["segment_frames"]) if obj else (p.get("info") or {}).get("frames", 0)
     out = []
     for k, v in ENGINES.items():
-        ready = v["key"] is None or bool(os.environ.get(v["key"]))
-        cost = generative.estimate_cost(k, info.get("frames", 0), info.get("fps", 30)) if info else 0
-        out.append({"id": k, "label": v["label"], "ready": ready, "missing_key": None if ready else v["key"],
-                    "cost": cost})
+        ready, reason = (True, None) if k == "local" else generative.available()
+        out.append({"id": k, "label": v["label"], "ready": ready, "reason": reason,
+                    "parts": generative.plan_parts(span) if k == "vace" else 0})
     return out
 
 
@@ -239,16 +237,17 @@ class ProcessReq(BaseModel):
 
 @app.post("/api/projects/{pid}/process")
 def process(pid: str, req: ProcessReq):
-    import os
     p = load(pid)
     prod = p.get("product")
     if not prod or prod["object_id"] != req.object_id or not prod["check"]["ok"]:
         raise HTTPException(400, "Upload a matching product image for this object first.")
     if req.engine not in ENGINES:
         raise HTTPException(400, "Unknown engine.")
-    key = ENGINES[req.engine]["key"]
-    if key and not os.environ.get(key):
-        raise HTTPException(400, f"{key} is missing. Add it to vid-bid/.env and restart ./run.sh.")
+    if req.engine == "vace":
+        from . import generative
+        ready, reason = generative.available()
+        if not ready:
+            raise HTTPException(400, reason)
     job = JOBS.get(p.get("job") or "")
     if job and job["status"] in ("queued", "running"):
         raise HTTPException(409, "This project is already busy.")
@@ -262,14 +261,9 @@ def process(pid: str, req: ProcessReq):
         if req.engine == "local":
             out = replace.run(work, obj, cutout, progress)
             out["engine"] = "local"
-            out["stats"] = "Fast preview (local) · " + out["stats"]
-        elif req.engine == "vace":
-            out = generative.run_vace(work, obj, cutout, req.description, progress)
+            out["stats"] = "Fast (local) · " + out["stats"]
         else:
-            prev = (load(pid).get("results") or {}).get("local")
-            if prev and prev.get("object_id") != obj["id"]:
-                prev = None
-            out = generative.run_aleph(work, obj, cutout, req.description, prev, progress)
+            out = generative.run_vace(work, obj, cutout, req.description, progress)
         out["object_id"] = obj["id"]
         cur = load(pid)
         results = cur.get("results") or {}

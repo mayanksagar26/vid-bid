@@ -17,7 +17,10 @@ imageio-ffmpeg
 timm
 kornia
 einops
-fal-client
-runwayml
+diffusers>=0.35
+transformers
+accelerate
+ftfy
+sentencepiece
 python-dotenv
 rembg[cpu]
