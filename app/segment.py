@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import torch
 
-from . import models
+from . import compat, models
 
 
 def _largest_component(mask):
@@ -105,7 +105,30 @@ def _mask_box(m):
     return [xs.min(), ys.min(), xs.max() + 1, ys.max() + 1]
 
 
-def track_object(frames_dir: Path, frame_scale, segments, dets, fps, work: Path, progress):
+KIND_MIN_PROB = 0.2   # CLIP probability of the object's category a detector box needs to prompt SAM
+
+
+def _is_kind(frame_path, box, category):
+    """Does the detector box still contain the object's kind (can, not the glass beside it)?
+
+    The detector's tracker can hand a track over to a neighbouring object when the original is
+    tilted, covered or blurred; prompting SAM with that box makes the mask follow the wrong thing."""
+    img = cv2.imread(str(frame_path))
+    if img is None:
+        return True
+    h, w = img.shape[:2]
+    x0, y0, x1, y1 = (int(v) for v in box)
+    px, py = int(0.03 * (x1 - x0)), int(0.03 * (y1 - y0))
+    crop = img[max(0, y0 - py):min(h, y1 + py), max(0, x0 - px):min(w, x1 + px)]
+    if crop.shape[0] < 8 or crop.shape[1] < 8:
+        return True
+    ranked = compat.classify([crop])
+    probs = dict(ranked)
+    return ranked[0][0] == category or probs.get(category, 0.0) >= KIND_MIN_PROB
+
+
+def track_object(frames_dir: Path, frame_scale, segments, dets, fps, work: Path, progress,
+                 category=None):
     """Propagate the object's mask through every frame of each segment.
 
     frames_dir holds 00000.jpg... downscaled by frame_scale. dets: [[frame, box(full-res), conf], ...]
@@ -150,6 +173,8 @@ def track_object(frames_dir: Path, frame_scale, segments, dets, fps, work: Path,
                         mb = _mask_box(carry)
                         if mb is not None and _box_iou(mb, box) < 0.5:
                             continue
+                    if category and not _is_kind(frames_dir / f"{f:05d}.jpg", box, category):
+                        continue
                     pred.add_new_points_or_box(state, frame_idx=f - start, obj_id=1, box=box)
                     prompted, last = True, f
                 if not prompted:

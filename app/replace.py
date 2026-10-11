@@ -28,6 +28,8 @@ from scipy.ndimage import gaussian_filter1d, median_filter, minimum_filter1d
 
 from . import media, segment
 
+MIN_FIT_PRECISION = 0.55  # share of the fitted body that must lie on the tracked mask
+MIN_FIT_RECALL = 0.45     # share of the mask the fitted body must cover
 GAP_FILL = 6            # frames: reuse a neighbouring mask when SAM drops the object briefly
 TAIL_PAD_SECONDS = 0.5  # keep tracking a little past the last detection
 SEG_JOIN_SECONDS = 5.0  # bridge detection gaps (e.g. a can tilted mid-pour) with SAM tracking
@@ -91,10 +93,31 @@ def _get_masks(work, obj, info, progress):
             segs.append([s, e])
 
     masks = segment.track_object(frames_dir, scale, segs, dets, fps, work,
-                                 lambda p, m: progress(0.02 + 0.68 * p, m))
+                                 lambda p, m: progress(0.02 + 0.68 * p, m),
+                                 category=obj.get("category"))
     np.savez_compressed(cache, shape=np.array(shape), scale=np.array(scale),
                         **{f"f{k}": v for k, v in masks.items()})
     return masks, shape, scale
+
+
+def _picture_area(frames_dir, frames, dark=14):
+    """(x0, y0, x1, y1) of the picture inside black letterbox/pillarbox bars, at frame resolution.
+
+    An object that runs into a bar is cut off just like one at the frame edge."""
+    if not frames:
+        return None
+    picks = [frames[len(frames) * k // 4] for k in (0, 2, 3)]
+    imgs = [cv2.imread(str(frames_dir / f"{f:05d}.jpg"), cv2.IMREAD_GRAYSCALE) for f in picks]
+    imgs = [i for i in imgs if i is not None]
+    if not imgs:
+        return None
+    h, w = imgs[0].shape
+    rows = np.max([i.max(1) for i in imgs], 0) > dark   # a row is picture if any sample is lit
+    cols = np.max([i.max(0) for i in imgs], 0) > dark
+    if not rows.any() or not cols.any():
+        return None
+    ry, cx = np.nonzero(rows)[0], np.nonzero(cols)[0]
+    return int(cx[0]), int(ry[0]), int(cx[-1]) + 1, int(ry[-1]) + 1
 
 
 def _unpack(packed, shape):
@@ -144,7 +167,7 @@ def _end_fit(uc, wid, u_end, hw_end, sign, thr=0.0):
     return best
 
 
-def _measure(mask, prev_up, cylinder):
+def _measure(mask, prev_up, cylinder, valid=None):
     """Silhouette of one mask (mask pixel units).
 
     Seen from above or below, a cylinder's sides converge (perspective), so the left and right
@@ -162,11 +185,21 @@ def _measure(mask, prev_up, cylinder):
     a = np.deg2rad(ang)
     e1 = np.array([np.cos(a), np.sin(a)])
     e2 = np.array([-np.sin(a), np.cos(a)])
+    vx0, vy0, vx1, vy1 = valid if valid is not None else (0, 0, w, h)  # picture inside any letterbox
+    # Touching the picture's edge: the outline is cut, so its shape says little about the pose.
+    cut = bool((xs <= vx0 + 1).any() or (ys <= vy0 + 1).any() or (xs >= vx1 - 2).any()
+               or (ys >= vy1 - 2).any())
     if prev_up is None:
         if max(rw, rh) > 1.25 * min(rw, rh):  # clearly elongated: the axis runs along it
             up = e1 if rw > rh else e2
         else:
             up = e1 if abs(e1[1]) > abs(e2[1]) else e2  # products are usually upright
+        if up[1] > 0:
+            up = -up
+    elif max(rw, rh) <= 1.25 * min(rw, rh) and abs(prev_up[1]) < 0.5 and not cut:
+        # Not elongated, yet the carried axis is far from upright: it has drifted (a tilted pose,
+        # a hand), so go back to the upright prior rather than trust it.
+        up = e1 if abs(e1[1]) > abs(e2[1]) else e2
         if up[1] > 0:
             up = -up
     else:
@@ -183,7 +216,7 @@ def _measure(mask, prev_up, cylinder):
          "top_ok": True, "bot_ok": True, "area": float(mask.sum()),
          "solid": float(mask.sum()) / max(1.0, cv2.contourArea(hull))}  # < ~0.97: something covers it
 
-    on_border = (xs <= 1) | (ys <= 1) | (xs >= w - 2) | (ys >= h - 2)
+    on_border = (xs <= vx0 + 1) | (ys <= vy0 + 1) | (xs >= vx1 - 2) | (ys >= vy1 - 2)
     if on_border.any():
         bu = pu[on_border]
         g["top_ok"] = not (bu > u1 - 0.15 * (u1 - u0)).any()
@@ -207,8 +240,12 @@ def _measure(mask, prev_up, cylinder):
         lc = _robust_fit(A, lft)
         rc = _robust_fit(A, rgt)
         c, hw = (lc + rc) / 2, (rc - lc) / 2
-        # Taper limited to what perspective can plausibly do (+-35% over the body length).
-        hw[1] = np.clip(hw[1], -0.35 * hw[0] / max(L, 1), 0.35 * hw[0] / max(L, 1))
+        # Taper limited to what perspective can plausibly do (+-35% over the body length). Measured
+        # at the body's middle: the line's intercept at u=0 can be far outside the object.
+        um = (u0 + u1) / 2
+        hm = max(1.0, hw[0] + hw[1] * um)
+        hw[1] = np.clip(hw[1], -0.35 * hm / max(L, 1), 0.35 * hm / max(L, 1))
+        hw[0] = hm - hw[1] * um
         g["c"], g["hw"] = c, hw
     if not cylinder or L < 8:
         return g
@@ -231,7 +268,7 @@ def _measure(mask, prev_up, cylinder):
 
     # The ends: last rows at least 30% of the body wide, so thin things attached to the mask
     # (a pouring stream, a straw) don't pass for the lid. _end_fit adds the trimmed tip back.
-    thr = 0.3 * g["hw"][0]
+    thr = 0.3 * hw_at((u0 + u1) / 2)
     wide = np.where(np.nan_to_num(wid) >= thr)[0]
     if len(wide) >= 2:
         half = 0.5 * (umax - umin) / nb
@@ -305,20 +342,21 @@ def _landmarks(prof):
     return float(LAMS[body[0]]), float(LAMS[body[-1]])
 
 
-def _geometry(masks, shape, inv_scale, shape_kind, category):
+def _geometry(masks, shape, inv_scale, shape_kind, category, valid=None):
     """Per-frame geometry in full-resolution pixels:
     T (lid centre xy), B (base centre xy), body half-widths at T and B, erel_t, erel_b.
     Plus clip-wide shape: body height/width ratio and the outline profile."""
     cyl = shape_kind == "cylinder"
-    frames, gs, prev_up = [], [], None
+    frames, gs, prev_up, masks_small = [], [], None, {}
     for f in sorted(masks):
         m = _clean(_unpack(masks[f], shape))
         if m.sum() < 30:
             continue
-        g = _measure(m, prev_up, cyl)
+        g = _measure(m, prev_up, cyl, valid)
         prev_up = g["up"]
         frames.append(f)
         gs.append(g)
+        masks_small[f] = m
     if not gs:
         return {}
 
@@ -369,8 +407,30 @@ def _geometry(masks, shape, inv_scale, shape_kind, category):
     # The end ellipses change slowly but their fits are noisy under hands: ~0.5 s median.
     sm = _smooth(frames, vals, sigmas=[1.5, 1.5, 1.5, 1.5, 3.0, 3.0, 5.0, 5.0],
                  medians=[5, 5, 5, 5, 5, 5, 13, 13])
-    return {f: sm[i] for i, f in enumerate(frames)}, {"ratio": ratio, "prof": prof,
-                                                     "keep_ends": category == "can"}
+    # Sanity guard: the fitted body must sit on the tracked mask. A fit that spills far outside
+    # it (wrong axis, a cone fitted as a cylinder) or covers little of it would paste the product
+    # somewhere the object is not, so such frames keep the original footage instead.
+    geo = {}
+    for i, f in enumerate(frames):
+        T, Bc = sm[i, 0:2] / inv_scale, sm[i, 2:4] / inv_scale
+        ax = T - Bc
+        n = float(np.hypot(*ax))
+        if n < 4:
+            continue
+        rt = np.array([-ax[1], ax[0]]) / n
+        quad = np.array([T + rt * sm[i, 4] / inv_scale, T - rt * sm[i, 4] / inv_scale,
+                         Bc - rt * sm[i, 5] / inv_scale, Bc + rt * sm[i, 5] / inv_scale])
+        m = masks_small[f]
+        qm = np.zeros(m.shape, np.uint8)
+        cv2.fillConvexPoly(qm, np.round(quad).astype(np.int32), 1)
+        inter = float((qm.astype(bool) & m).sum())
+        if inter / max(1.0, float(qm.sum())) < MIN_FIT_PRECISION or \
+                inter / max(1.0, float(m.sum())) < MIN_FIT_RECALL:
+            continue
+        geo[f] = sm[i]
+    if not geo:
+        return {}
+    return geo, {"ratio": ratio, "prof": prof, "keep_ends": category == "can"}
 
 
 # ------------------------------------------------------------------ appearance
@@ -600,10 +660,13 @@ def run(work: Path, obj, cutout_path: Path, progress):
     if not masks:
         raise RuntimeError("Tracking lost the object in every frame.")
     progress(0.71, "Fitting geometry")
-    res = _geometry(masks, mshape, 1.0 / scale, shape_kind, obj.get("category"))
+    valid = _picture_area(work / "frames", sorted(masks))
+    res = _geometry(masks, mshape, 1.0 / scale, shape_kind, obj.get("category"), valid)
     if not res:
         raise RuntimeError("Could not fit the object's shape in any frame.")
     geo, shape_info = res
+    if valid is not None:  # nothing is drawn over letterbox bars
+        shape_info["picture"] = [v / scale for v in valid]
 
     # Fill brief dropouts with the nearest frame so the old object doesn't flash through.
     mframes = np.array(sorted(geo))
@@ -722,6 +785,12 @@ def _render(frame, src, geo, masks, mshape, tex, shape_info, shape_kind, look):
     a_w = np.clip((1 - np.abs(st)) * r + 0.5, 0, 1)
     a_s = np.clip((lam - l_top) * Hb + 0.5, 0, 1) * np.clip((l_bot - lam) * Hb + 0.5, 0, 1)
     body_a = (a_w * a_s).astype(np.float32)
+    pic = shape_info.get("picture")
+    if pic is not None:
+        px0, py0, px1, py1 = pic
+        inside = (gx >= px0 - 0.5) & (gx < px1 + 0.5) & (gy >= py0 - 0.5) & (gy < py1 + 0.5)
+        body_a = body_a * inside
+        lid = lid & inside
 
     # Sample the product.
     if cyl:
